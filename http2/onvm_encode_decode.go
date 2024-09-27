@@ -3,6 +3,7 @@ package http2
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -423,9 +424,12 @@ func FastDecodeResponse(buf []byte) (*http.Response, error) {
 
 	// Header
 	tlv2, err := pdu.DecodeTLV()
-	header_string := tlv2.Value.(string)
 	if err != nil {
 		return nil, err
+	}
+	header_string, ok := tlv2.Value.(string)
+	if !ok {
+		return nil, errors.New("nil pointer detected, expected type is string")
 	}
 	resp.Header = toHeader(header_string)
 
