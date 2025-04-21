@@ -3,7 +3,7 @@ package http2
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
+	// "errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -251,7 +251,7 @@ func (pdu *OnvmPDU) DecodeTLV() (*TLV, error) {
 	tlv.Length = byteTouint32(bl)
 
 	// value
-	if tlv.Length != 0 {
+	if tlv.Length > 0 {
 		bv := make([]byte, tlv.Length)
 		_, err = buf.Read(bv)
 		if err != nil {
@@ -273,13 +273,18 @@ func (pdu *OnvmPDU) DecodeTLV() (*TLV, error) {
 			//string
 			tlv.Value = string(bv)
 		}
+	} else {
+		// If length is 0, the value should be an empty string for string types
+		if tlv.Tag != STATUS && tlv.Tag != CONTENT_LEN && tlv.Tag != PAYLOAD {
+			tlv.Value = ""
+		}
 	}
 
 	return &tlv, err
 }
 
 /*********************************
-     Methods of http.Request
+		Methods of http.Request
 *********************************/
 
 func FastEncodeRequest(req *http.Request) ([]byte, error) {
@@ -330,29 +335,47 @@ func FastDecodeRequest(buf []byte) (*http.Request, error) {
 
 	// Method
 	tlv1, err := pdu.DecodeTLV()
-	req.Method = tlv1.Value.(string)
 	if err != nil {
 		return nil, err
 	}
+	methodValue := tlv1.Value
+	methodStr, ok := methodValue.(string)
+	if !ok {
+		Log.Errorf("Expected method value to be string, got: %T, value: %+v", methodValue, methodValue)
+		return nil, fmt.Errorf("expected method value to be string")
+	}
+	req.Method = methodStr
 
 	// URL
 	tlv2, err := pdu.DecodeTLV()
 	if err != nil {
 		return nil, err
 	}
-	req.URL, err = url.Parse(tlv2.Value.(string))
+	urlValue := tlv2.Value
+	urlStr, ok := urlValue.(string)
+	if !ok {
+		Log.Errorf("Expected URL value to be string, got: %T, value: %+v", urlValue, urlValue)
+		return nil, fmt.Errorf("expected URL value to be string")
+	}
+	req.URL, err = url.Parse(urlStr)
 	if err != nil {
+		Log.Errorf("Error parsing URL: %v", err)
 		return nil, err
 	}
 
 	// Header
 	tlv3, err := pdu.DecodeTLV()
-	header_string := tlv3.Value.(string)
 	if err != nil {
 		return nil, err
 	}
+	headerValue := tlv3.Value
+	headerString, ok := headerValue.(string)
+	if !ok {
+		Log.Errorf("Expected header value to be string, got: %T, value: %+v", headerValue, headerValue)
+		return nil, fmt.Errorf("expected header value to be string")
+	}
 
-	req.Header = toHeader(header_string)
+	req.Header = toHeader(headerString)
 
 	// Payload
 	tlv4, err := pdu.DecodeTLV()
@@ -360,7 +383,13 @@ func FastDecodeRequest(buf []byte) (*http.Request, error) {
 		return nil, err
 	}
 	if tlv4.Length != 0 {
-		req.Body = io.NopCloser(bytes.NewReader(tlv4.Value.([]byte)))
+		payloadValue := tlv4.Value
+		payloadBytes, ok := payloadValue.([]byte)
+		if !ok {
+			Log.Errorf("Expected payload value to be []byte, got: %T, value: %+v", payloadValue, payloadValue)
+			return nil, fmt.Errorf("expected payload value to be []byte")
+		}
+		req.Body = io.NopCloser(bytes.NewReader(payloadBytes))
 		req.ContentLength = int64(tlv4.Length)
 	} else {
 		req.Body = nil
@@ -373,7 +402,7 @@ func FastDecodeRequest(buf []byte) (*http.Request, error) {
 }
 
 /*********************************
-     Methods of http.Response
+		Methods of http.Response
 *********************************/
 
 func FastEncodeResponse(sc int32, header http.Header, cl int64, payload []byte) ([]byte, error) {
@@ -417,21 +446,29 @@ func FastDecodeResponse(buf []byte) (*http.Response, error) {
 
 	// Status Code
 	tlv1, err := pdu.DecodeTLV()
-	resp.StatusCode = int(tlv1.Value.(uint32))
 	if err != nil {
 		return nil, err
 	}
+	statusCodeValue := tlv1.Value
+	statusCodeInt, ok := statusCodeValue.(uint32)
+	if !ok {
+		Log.Errorf("Expected status code value to be uint32, got: %T, value: %+v", statusCodeValue, statusCodeValue)
+		return nil, fmt.Errorf("expected status code value to be uint32")
+	}
+	resp.StatusCode = int(statusCodeInt)
 
 	// Header
 	tlv2, err := pdu.DecodeTLV()
 	if err != nil {
 		return nil, err
 	}
-	header_string, ok := tlv2.Value.(string)
+	headerValue := tlv2.Value
+	headerString, ok := headerValue.(string)
 	if !ok {
-		return nil, errors.New("nil pointer detected, expected type is string")
+		Log.Errorf("Expected header value to be string, got: %T, value: %+v", headerValue, headerValue)
+		return nil, fmt.Errorf("expected header value to be string")
 	}
-	resp.Header = toHeader(header_string)
+	resp.Header = toHeader(headerString)
 
 	// PAYLOAD
 	tlv3, err := pdu.DecodeTLV()
@@ -439,9 +476,14 @@ func FastDecodeResponse(buf []byte) (*http.Response, error) {
 		return nil, err
 	}
 	if tlv3.Length != 0 {
-		resp.Body = io.NopCloser(bytes.NewReader(tlv3.Value.([]byte)))
+		payloadValue := tlv3.Value
+		payloadBytes, ok := payloadValue.([]byte)
+		if !ok {
+			Log.Errorf("Expected payload value to be []byte, got: %T, value: %+v", payloadValue, payloadValue)
+			return nil, fmt.Errorf("expected payload value to be []byte")
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(payloadBytes))
 		resp.ContentLength = int64(tlv3.Length)
-		// fmt.Printf("FastDecodeResponse, response content length: %d (Bytes)\n", resp.ContentLength)
 	} else {
 		resp.Body = nil
 		resp.ContentLength = 0
